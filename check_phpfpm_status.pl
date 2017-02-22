@@ -98,7 +98,7 @@ sub help {
 -h, --help
    print this help message
 -H, --hostname=HOST
-   name or IP address of host to check
+   name or IP address of host or UNIX Socket to check
 -p, --port=PORT
    Http port, or Fastcgi port when using --fastcgi
 -u, --url=URL
@@ -283,16 +283,31 @@ if (defined($o_fastcgi)) {
     # -- FASTCGI
     eval "use FCGI::Client::Connection;";
     nagios_exit($phpfpm,"UNKNOWN","You need to activate FCGI::Client::Connection CPAN module for this feature: " . $@) if $@;
-    eval "use IO::Socket::INET";
-    nagios_exit($phpfpm,"UNKNOWN","You need to activate IO::Socket::INET CPAN module for this feature: " . $@) if $@;
+    my $sock;
 
-    if (!defined($o_port)) {
-        $o_port = 9000;
+
+    if ($override_ip =~ m/^unix:/) {
+        eval "use IO::Socket::UNIX";
+        nagios_exit($phpfpm,"UNKNOWN","You need to activate IO::Socket::UNIX CPAN module for this feature: " . $@) if $@;
+	my $real_sock = $override_ip;
+        $real_sock =~ s/^unix://;
+        $sock = IO::Socket::UNIX->new(
+            Type => SOCK_STREAM(),
+            Peer => $real_sock,
+        );
+        $o_port = '';
     }
-    my $sock = IO::Socket::INET->new(
-        PeerAddr => $override_ip,
-        PeerPort => $o_port,
-    );
+    else{
+        eval "use IO::Socket::INET";
+        nagios_exit($phpfpm,"UNKNOWN","You need to activate IO::Socket::INET CPAN module for this feature: " . $@) if $@;
+        if (!defined($o_port)) {
+            $o_port = 9000;
+        }
+        $sock = IO::Socket::INET->new(
+            PeerAddr => $override_ip,
+            PeerPort => $o_port,
+        );
+    }
     if (!$sock) {
         nagios_exit($phpfpm,"CRITICAL", "Cannot connect to  $override_ip : $o_port !");
     }
@@ -556,7 +571,10 @@ if ($response->is_success) {
         print ("\nDEBUG Parse results => Pool:" . $Pool . "\nAcceptedConn:" . $AcceptedConn . "\nActiveProcesses:" . $ActiveProcesses . " TotalProcesses :".$TotalProcesses . " IdleProcesses :" .$IdleProcesses . "\nMaxActiveProcesses :" . $MaxActiveProcesses . " MaxChildrenReached :" . $MaxChildrenReached . "\nListenQueue :" . $ListenQueue . " ListenQueueLen : " .$ListenQueueLen . " MaxListenQueue: " . $MaxListenQueue ."\n");
     }
 
-    my $TempFile = $TempPath.$o_host.'_check_phpfpm_status'.md5_hex($url);
+    my $HostForTemp = $o_host;
+    $HostForTemp =~ s/\//_/g;
+    $HostForTemp =~ s/^unix:\///;
+    my $TempFile = $TempPath.$HostForTemp.'_check_phpfpm_status'.md5_hex($url);
     my $FH;
 
     my $LastUptime = 0;
